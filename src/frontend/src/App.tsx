@@ -2,15 +2,24 @@ import { Toaster } from "@/components/ui/sonner";
 import { Fingerprint } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
-import { getUserProfile } from "./lib/storage";
+import { getUserProfile, getUserRole } from "./lib/storage";
+import AdminPage from "./pages/AdminPage";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
+import OrderDetailPage from "./pages/OrderDetailPage";
+import RoleSelectionPage from "./pages/RoleSelectionPage";
 
-type AppRoute = "login" | "dashboard";
+type AppRoute =
+  | "login"
+  | "role_selection"
+  | "dashboard"
+  | "order_detail"
+  | "admin";
 
 export default function App() {
   const { identity, isInitializing } = useInternetIdentity();
   const [route, setRoute] = useState<AppRoute>("login");
+  const [selectedOrderId, setSelectedOrderId] = useState<string>("");
 
   // On mount and when identity changes, determine route
   useEffect(() => {
@@ -19,7 +28,12 @@ export default function App() {
     if (identity && !identity.getPrincipal().isAnonymous()) {
       const profile = getUserProfile();
       if (profile) {
-        setRoute("dashboard");
+        const role = getUserRole();
+        if (!role) {
+          setRoute("role_selection");
+        } else {
+          setRoute("dashboard");
+        }
       } else {
         setRoute("login");
       }
@@ -42,13 +56,62 @@ export default function App() {
     );
   }
 
+  const profile = getUserProfile();
+  const pseudonym = profile?.pseudonym ?? "Anonymous";
+
+  const handleLoginSuccess = () => {
+    const role = getUserRole();
+    if (!role) {
+      setRoute("role_selection");
+    } else {
+      setRoute("dashboard");
+    }
+  };
+
+  const handleRoleSelected = (_role: "lister" | "writer") => {
+    setRoute("dashboard");
+  };
+
+  const handleNavigateToOrder = (orderId: string) => {
+    setSelectedOrderId(orderId);
+    setRoute("order_detail");
+  };
+
+  const handleBackFromOrder = () => {
+    setSelectedOrderId("");
+    setRoute("dashboard");
+  };
+
+  const handleLogout = () => {
+    setSelectedOrderId("");
+    setRoute("login");
+  };
+
   return (
     <>
-      {route === "login" ? (
-        <LoginPage onLoginSuccess={() => setRoute("dashboard")} />
-      ) : (
-        <DashboardPage onLogout={() => setRoute("login")} />
+      {route === "login" && <LoginPage onLoginSuccess={handleLoginSuccess} />}
+      {route === "role_selection" && (
+        <RoleSelectionPage
+          pseudonym={pseudonym}
+          onRoleSelected={handleRoleSelected}
+        />
       )}
+      {route === "dashboard" && (
+        <DashboardPage
+          onLogout={handleLogout}
+          onNavigateToOrder={handleNavigateToOrder}
+          onNavigateToAdmin={() => setRoute("admin")}
+        />
+      )}
+      {route === "order_detail" && selectedOrderId && (
+        <OrderDetailPage
+          orderId={selectedOrderId}
+          onBack={handleBackFromOrder}
+          onLogout={handleLogout}
+        />
+      )}
+      {route === "admin" && <AdminPage onBack={() => setRoute("dashboard")} />}
+
       <Toaster
         position="bottom-right"
         toastOptions={{

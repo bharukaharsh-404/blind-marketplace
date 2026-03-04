@@ -26,6 +26,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         profile = {
           pseudonym: generatePseudonym(),
           principalId,
+          role: "lister", // default; updated in RoleSelectionPage
         };
         saveUserProfile(profile);
       } else if (profile.principalId !== principalId) {
@@ -33,6 +34,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         profile = {
           pseudonym: generatePseudonym(),
           principalId,
+          role: "lister", // default; updated in RoleSelectionPage
         };
         saveUserProfile(profile);
       }
@@ -84,7 +86,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
           </span>
         </div>
         <span className="text-xs font-mono text-muted-foreground/60 tracking-widest uppercase">
-          Phase 1 — Auth + Orders
+          Phase 2 — Full Marketplace
         </span>
       </header>
 
