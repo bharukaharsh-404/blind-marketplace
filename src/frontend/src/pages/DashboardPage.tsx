@@ -1,0 +1,251 @@
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Fingerprint, LogOut, PackageOpen, Plus } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import CreateOrderModal from "../components/CreateOrderModal";
+import OrderCard from "../components/OrderCard";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
+import {
+  clearUserProfile,
+  getOrders,
+  getUserProfile,
+  seedSampleOrders,
+} from "../lib/storage";
+import type { Order, UserProfile } from "../types/marketplace";
+
+interface DashboardPageProps {
+  onLogout: () => void;
+}
+
+export default function DashboardPage({ onLogout }: DashboardPageProps) {
+  const { clear, isInitializing } = useInternetIdentity();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const refreshOrders = useCallback(() => {
+    setOrders(getOrders());
+  }, []);
+
+  useEffect(() => {
+    // Small delay to let auth settle
+    const timer = setTimeout(() => {
+      seedSampleOrders();
+      const profile = getUserProfile();
+      setUserProfile(profile);
+      refreshOrders();
+      setIsLoading(false);
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [refreshOrders]);
+
+  const handleLogout = () => {
+    clearUserProfile();
+    clear();
+    onLogout();
+    toast.success("Logged out successfully", { duration: 2000 });
+  };
+
+  const handleOrderCreated = (order: Order) => {
+    setOrders((prev) => [order, ...prev]);
+  };
+
+  const pseudonym = userProfile?.pseudonym ?? "Anonymous";
+
+  const MARKER_IDS = [
+    "orders.item.1",
+    "orders.item.2",
+    "orders.item.3",
+    "orders.item.4",
+    "orders.item.5",
+    "orders.item.6",
+  ];
+
+  return (
+    <div
+      data-ocid="dashboard.page"
+      className="relative min-h-screen flex flex-col bg-background overflow-hidden"
+    >
+      {/* Grid background */}
+      <div className="absolute inset-0 grid-pattern opacity-30" />
+
+      {/* Ambient glow */}
+      <div
+        className="absolute top-0 right-1/4 w-80 h-80 rounded-full pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(circle, oklch(0.78 0.18 192 / 0.04) 0%, transparent 70%)",
+        }}
+      />
+
+      {/* Header */}
+      <header className="relative z-10 sticky top-0 border-b border-border/40 bg-background/80 backdrop-blur-md">
+        <div className="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded border border-primary/40 flex items-center justify-center bg-primary/5">
+              <Fingerprint className="w-4 h-4 text-primary" />
+            </div>
+            <span className="font-display font-semibold text-sm tracking-wide text-foreground/80">
+              BLIND MARKETPLACE
+            </span>
+          </div>
+
+          {/* Right side */}
+          <div className="flex items-center gap-3">
+            {isLoading ? (
+              <Skeleton className="h-6 w-24 bg-muted/40" />
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, x: 8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3 }}
+                className="flex items-center gap-2"
+              >
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/50 bg-muted/20">
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                  <span className="font-mono text-xs text-foreground/70">
+                    {pseudonym}
+                  </span>
+                </div>
+
+                <Button
+                  data-ocid="header.logout.button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleLogout}
+                  disabled={isInitializing}
+                  className="h-7 px-2 text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-all"
+                >
+                  <LogOut className="w-3.5 h-3.5 mr-1.5" />
+                  <span className="text-xs">Logout</span>
+                </Button>
+              </motion.div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main className="relative z-10 flex-1 max-w-4xl mx-auto w-full px-6 py-8">
+        {/* Page title row */}
+        <div className="flex items-start justify-between mb-8">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <h2 className="font-display text-2xl font-bold text-foreground mb-1">
+              Order Board
+            </h2>
+            <p className="text-sm text-muted-foreground/60">
+              {isLoading ? (
+                <Skeleton className="h-4 w-32 bg-muted/40 inline-block" />
+              ) : (
+                <>
+                  {orders.length} order{orders.length !== 1 ? "s" : ""} — IDs
+                  only, no identities
+                </>
+              )}
+            </p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+          >
+            <Button
+              data-ocid="dashboard.create_order.button"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="h-9 px-4 text-sm bg-primary text-primary-foreground hover:opacity-90 transition-opacity font-medium flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Create New Order</span>
+              <span className="sm:hidden">New Order</span>
+            </Button>
+          </motion.div>
+        </div>
+
+        {/* Orders list / loading / empty state */}
+        {isLoading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <Skeleton
+                key={i}
+                className="h-20 w-full bg-muted/20 rounded-md"
+              />
+            ))}
+          </div>
+        ) : orders.length === 0 ? (
+          <motion.div
+            data-ocid="orders.empty_state"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.2 }}
+            className="flex flex-col items-center justify-center py-20 px-8 border border-dashed border-border/40 rounded-lg text-center"
+          >
+            <div className="w-12 h-12 rounded-full border border-border/50 bg-muted/20 flex items-center justify-center mb-4">
+              <PackageOpen className="w-6 h-6 text-muted-foreground/40" />
+            </div>
+            <h3 className="font-display font-semibold text-sm text-foreground/60 mb-1">
+              No orders yet
+            </h3>
+            <p className="text-xs text-muted-foreground/40 mb-5">
+              Be the first to post one.
+            </p>
+            <Button
+              onClick={() => setIsCreateModalOpen(true)}
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs border-border/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1.5" />
+              Create New Order
+            </Button>
+          </motion.div>
+        ) : (
+          <AnimatePresence mode="popLayout">
+            <div data-ocid="orders.list" className="space-y-3">
+              {orders.map((order, i) => (
+                <OrderCard
+                  key={order.orderId}
+                  order={order}
+                  index={i}
+                  data-ocid={MARKER_IDS[i] ?? `orders.item.${i + 1}`}
+                />
+              ))}
+            </div>
+          </AnimatePresence>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="relative z-10 py-4 px-6 border-t border-border/30 mt-auto">
+        <p className="text-center text-xs text-muted-foreground/40 font-mono">
+          © {new Date().getFullYear()}. Built with ♥ using{" "}
+          <a
+            href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary/50 hover:text-primary/80 transition-colors"
+          >
+            caffeine.ai
+          </a>
+        </p>
+      </footer>
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        open={isCreateModalOpen}
+        onOpenChange={setIsCreateModalOpen}
+        pseudonym={pseudonym}
+        onOrderCreated={handleOrderCreated}
+      />
+    </div>
+  );
+}

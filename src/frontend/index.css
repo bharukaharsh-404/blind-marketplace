@@ -1,0 +1,206 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Font Faces ──────────────────────────────────────────────── */
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/assets/fonts/BricolageGrotesque[opsz,wdth,wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Cabinet Grotesk";
+  src: url("/assets/fonts/CabinetGrotesk-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/assets/fonts/GeistMono[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ─── Design Tokens ───────────────────────────────────────────── */
+@layer base {
+  :root {
+    --radius: 0.375rem;
+
+    /* Core palette — dark-only theme */
+    --background: 0.12 0.008 265;
+    --foreground: 0.93 0.012 265;
+
+    --card: 0.15 0.01 265;
+    --card-foreground: 0.93 0.012 265;
+
+    --popover: 0.16 0.012 265;
+    --popover-foreground: 0.93 0.012 265;
+
+    /* Electric cyan primary */
+    --primary: 0.78 0.18 192;
+    --primary-foreground: 0.1 0.02 192;
+
+    --secondary: 0.2 0.015 265;
+    --secondary-foreground: 0.85 0.01 265;
+
+    --muted: 0.18 0.01 265;
+    --muted-foreground: 0.55 0.01 265;
+
+    --accent: 0.22 0.018 265;
+    --accent-foreground: 0.93 0.012 265;
+
+    --destructive: 0.62 0.22 25;
+    --destructive-foreground: 0.98 0 0;
+
+    --border: 0.25 0.015 265;
+    --input: 0.22 0.015 265;
+    --ring: 0.78 0.18 192;
+
+    --chart-1: 0.78 0.18 192;
+    --chart-2: 0.72 0.15 160;
+    --chart-3: 0.65 0.2 280;
+    --chart-4: 0.82 0.16 85;
+    --chart-5: 0.68 0.22 340;
+
+    --sidebar: 0.14 0.01 265;
+    --sidebar-foreground: 0.93 0.012 265;
+    --sidebar-primary: 0.78 0.18 192;
+    --sidebar-primary-foreground: 0.1 0.02 192;
+    --sidebar-accent: 0.2 0.015 265;
+    --sidebar-accent-foreground: 0.93 0.012 265;
+    --sidebar-border: 0.22 0.015 265;
+    --sidebar-ring: 0.78 0.18 192;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Cabinet Grotesk", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ─── Noise texture overlay ───────────────────────────────────── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+}
+
+/* ─── Grid dot pattern ────────────────────────────────────────── */
+.grid-pattern {
+  background-image: radial-gradient(
+    circle,
+    oklch(var(--border) / 0.6) 1px,
+    transparent 1px
+  );
+  background-size: 28px 28px;
+}
+
+/* ─── Glow effects ────────────────────────────────────────────── */
+.glow-cyan {
+  box-shadow:
+    0 0 20px oklch(var(--primary) / 0.15),
+    0 0 40px oklch(var(--primary) / 0.05);
+}
+
+.glow-cyan-text {
+  text-shadow: 0 0 20px oklch(var(--primary) / 0.5);
+}
+
+/* ─── Order ID badge styling ──────────────────────────────────── */
+.order-id-badge {
+  font-family: "Geist Mono", monospace;
+  letter-spacing: 0.08em;
+}
+
+/* ─── Animations ──────────────────────────────────────────────── */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px oklch(var(--primary) / 0.2);
+  }
+  50% {
+    box-shadow: 0 0 24px oklch(var(--primary) / 0.5);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2.5s ease-in-out infinite;
+}
+
+/* ─── Stagger delays ──────────────────────────────────────────── */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+.stagger-6 { animation-delay: 0.3s; }
+
+/* ─── Scroll bar ──────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: oklch(var(--background));
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(var(--border));
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--muted-foreground) / 0.5);
+}
+
+/* ─── Keyframes for shadcn ────────────────────────────────────── */
+@layer base {
+  @keyframes accordion-down {
+    from { height: 0; }
+    to { height: var(--radix-accordion-content-height); }
+  }
+  @keyframes accordion-up {
+    from { height: var(--radix-accordion-content-height); }
+    to { height: 0; }
+  }
+}
