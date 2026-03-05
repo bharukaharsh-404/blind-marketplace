@@ -8,8 +8,12 @@ export interface Order {
   listerPseudonym: string;
   // Phase 2 additions
   writerPseudonym?: string;
-  escrowStatus: "none" | "held" | "released";
+  escrowStatus: "none" | "held" | "released" | "refunded";
   listerPrincipalId: string;
+  // Phase 3
+  isDisputed?: boolean;
+  disputeReason?: string;
+  stripePaymentIntentId?: string;
 }
 
 export interface UserProfile {
@@ -26,6 +30,9 @@ export interface Message {
   content: string;
   timestamp: number;
   isFlagged: boolean;
+  // Phase 3
+  readAt?: number;
+  deletedAt?: number;
 }
 
 export interface UploadedFile {
@@ -34,7 +41,22 @@ export interface UploadedFile {
   uploaderPseudonym: string;
   fileName: string;
   fileSize: number;
-  fileData: string; // base64
+  fileData: string; // base64 (Phase 2 compat) OR supabase URL
   createdAt: number;
   expiresAt: number; // createdAt + 24*60*60*1000
+  // Phase 3
+  supabaseStorageUrl?: string;
+}
+
+// Phase 3 Admin record
+export interface AdminOrderRecord {
+  orderId: string;
+  listerPrincipalId: string;
+  writerPrincipalId?: string;
+  listerPseudonym: string;
+  writerPseudonym?: string;
+  status: string;
+  escrowStatus: string;
+  isDisputed: boolean;
+  disputeReason?: string;
 }

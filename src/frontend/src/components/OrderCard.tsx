@@ -1,6 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Clock, DollarSign, Lock, Unlock } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  DollarSign,
+  Lock,
+  Unlock,
+} from "lucide-react";
 import { motion } from "motion/react";
 import type { Order } from "../types/marketplace";
 
@@ -91,6 +98,12 @@ export default function OrderCard({
               <span className="inline-flex items-center gap-1 text-[10px] font-mono text-chart-2/80 bg-chart-2/8 border border-chart-2/20 px-1.5 py-0.5 rounded-sm">
                 <Unlock className="w-2.5 h-2.5" />
                 Released
+              </span>
+            )}
+            {order.isDisputed && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-mono text-orange-500/80 bg-orange-500/8 border border-orange-500/25 px-1.5 py-0.5 rounded-sm">
+                <AlertTriangle className="w-2.5 h-2.5" />
+                Dispute
               </span>
             )}
           </div>

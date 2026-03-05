@@ -1,56 +1,53 @@
-# Blind Marketplace — Phase 2
+# Blind Marketplace
 
 ## Current State
-Phase 1 is complete and deployed. The app has:
-- Internet Identity login with pseudonym generation (stored in LocalStorage)
-- Order creation via modal (Title, Description, Budget)
-- Dashboard showing all orders by Order ID only
-- Orders stored in LocalStorage with statuses: open, in_progress, completed
-- No role distinction (all users treated the same)
-- No chat, payments, file upload, or order acceptance
-- Motoko backend has: registerUser, createOrder, getOrders, getMyOrders, getOrderById, getMyPseudonym
-- Authorization component installed
+
+Phase 1 & 2 are complete with:
+- Internet Identity login + pseudonym generation (Motoko canister + frontend hooks)
+- Role selection screen (Lister / Writer), stored in LocalStorage
+- Order creation (title, description, budget) with mock escrow flow, stored in LocalStorage
+- Order acceptance by Writers (status: open → in_progress), stored in LocalStorage
+- Polling-based chat (5s interval) per Order ID with keyword filtering (WhatsApp, Phone, Email, Cash, Direct), stored in LocalStorage
+- File upload per order (5MB limit, 24h expiry, base64 in LocalStorage)
+- Admin panel at /admin — Order ID mapping table + flagged messages tab, uses data from LocalStorage
+- Motoko canister handles: user registration, pseudonym generation, order creation/query, access control
+- Frontend lib/storage.ts is the single source of truth for all runtime data (LocalStorage)
+- Types defined in types/marketplace.ts: Order, UserProfile, Message, UploadedFile
 
 ## Requested Changes (Diff)
 
 ### Add
-1. **Role Selection Screen** — After Internet Identity login, if user has no role stored, show onboarding screen to choose "Lister" or "Writer". Store role in LocalStorage alongside pseudonym.
-2. **Order Acceptance Flow** — Writers see "Accept Order" button on open orders they did not create. Listers cannot accept any order. On accept: order status changes to "in_progress", writerPseudonym is stored on the order. Canister backend: `acceptOrder(orderId)` function.
-3. **Mock Escrow Payment** — When a Lister creates an order, show a mock "Pay to Escrow" step showing amount held. When Lister approves completed work, show "Release Funds" button. Platform takes 15% commission shown in UI. All payment state is stored in LocalStorage — no real Stripe.
-4. **Order Detail Page** — Clicking an order opens a full detail view. Shows Order ID, title, description, budget, status, escrow status. Contains the chat panel and file upload panel.
-5. **Polling-Based Chat** — Per order chat stored in LocalStorage. Messages polled every 5 seconds. Chat header shows "Order #ORD-XXX" only — no user names. Messages filtered for blocked keywords: "WhatsApp", "Phone", "Email", "Cash", "Direct". Flagged messages are stored with `isFlagged: true` and shown with a warning instead of content.
-6. **File Upload** — Writers can upload files up to 5MB. Files stored in LocalStorage as base64 with a `expiresAt` timestamp (createdAt + 24h). After 24h, download button is disabled. Only Lister can download files for their order.
-7. **Admin Panel** — Hidden route `/admin` accessible only to users whose principalId matches a hardcoded ADMIN_PRINCIPAL constant. Shows a table of all orders with: Order ID, Lister Pseudonym, Writer Pseudonym, status, flagged message count.
-8. **Motoko backend additions**: `acceptOrder`, `releaseEscrow`, `sendMessage`, `getMessages`, `uploadFile`, `getFiles`.
-9. **Order type extension**: add `writerPseudonym`, `escrowStatus` (held | released | none), `escrowAmount`.
-10. **Message type**: orderId, senderPseudonym, content, timestamp, isFlagged.
-11. **File type**: orderId, uploaderPseudonym, fileName, fileSize, fileData (base64), createdAt, expiresAt.
+- **Stripe Connect integration (Test Mode)**: Replace mock escrow confirmation with a real Stripe PaymentIntent flow. On order creation, initiate a Stripe payment (held/uncaptured). On "Release Funds", capture and split payment (85% writer, 15% platform). Use placeholder Test Mode keys with comments on where to swap real keys.
+- **Supabase client setup**: Add `@supabase/supabase-js` to frontend. Create `src/lib/supabase.ts` with placeholder `SUPABASE_URL` and `SUPABASE_ANON_KEY` constants and SQL schema comments for the tables needed.
+- **Persistent Orders** via Motoko canister: Already partially there (canister has createOrder, getOrders). Extend canister to also store writer assignment, escrow status, and order status updates so Orders persist across devices, not just LocalStorage.
+- **Persistent Messages** via Supabase: Replace localStorage message read/write with Supabase `messages` table queries. Chat polling (3s interval when open) reads from Supabase.
+- **Persistent Files** via Supabase Storage: Replace base64-in-localStorage file storage with Supabase Storage bucket uploads. Files still expire after 24h (tracked via `expires_at` column).
+- **Read receipts**: Track `read_at` timestamp on messages; show a checkmark indicator in chat UI.
+- **Message deletion**: Senders can delete their own messages (soft delete via `deleted_at` column).
+- **Dispute Resolution**: Lister can open dispute on in_progress orders. Order status: open → in_progress → disputed / completed. Admin panel gains a Disputes tab showing disputed orders with a "Release to Writer" and "Refund to Lister" action button.
+- **Supabase Row Level Security**: Add SQL comments in supabase.ts explaining the RLS policies to enable.
+- **Rate limiting**: Add a simple in-memory rate limiter hook (`useRateLimit`) that throttles API calls (max 10 chat sends per minute per user).
+- **Input validation**: Sanitize all user inputs (strip HTML tags, max length enforcement) before saving/sending.
+- **Enhanced Admin Panel**: Add Disputes tab, add "Release Funds" and "Refund" action buttons per disputed order. Wire to releaseEscrow / refundOrder functions.
 
 ### Modify
-1. **Order type** in `marketplace.ts` — add `writerPseudonym?: string`, `escrowStatus: "none" | "held" | "released"`, `listerPrincipalId: string`.
-2. **UserProfile type** — add `role: "lister" | "writer"`.
-3. **LoginPage** — after login success, check if role exists; if not, route to role selection instead of dashboard.
-4. **App.tsx routes** — add "role_selection", "order_detail", "admin" routes.
-5. **DashboardPage** — differentiate view for Listers vs Writers. Listers see only their own orders + create button. Writers see all open orders they haven't created (marketplace view). Add tab toggle: "My Orders" | "Marketplace" for Writers. Add click handler on OrderCard to navigate to order detail.
-6. **OrderCard** — add Accept button for Writers on open orders. Add "View Chat" link. Update to show escrow status badge.
-7. **storage.ts** — add functions for: role get/set, messages CRUD, files CRUD, acceptOrder, releaseEscrow.
-8. **CreateOrderModal** — after order creation, show mock "Pay Escrow" confirmation step before closing.
+- `lib/storage.ts`: Keep all function signatures identical but upgrade implementations — Orders read/write from Motoko canister (via backend.ts calls), Messages read/write from Supabase, Files read/write from Supabase Storage. LocalStorage used only for UserProfile and UserRole (device-local auth state).
+- `types/marketplace.ts`: Add `disputeReason?: string`, `isDisputed?: boolean`, `stripePaymentIntentId?: string` to Order. Add `readAt?: number`, `deletedAt?: number` to Message. Add `supabaseStorageUrl?: string` to UploadedFile.
+- `OrderDetailPage.tsx`: Add "Open Dispute" button for Listers on in_progress orders. Add read receipt checkmark on own messages. Add delete button on own messages. Change polling interval to 3s.
+- `AdminPage.tsx`: Add Disputes tab with disputed orders list and release/refund action buttons.
+- `main.mo`: Add `acceptOrder`, `updateOrderStatus`, `openDispute`, `adminReleaseEscrow` functions. Add `writerPrincipalId` to order storage map. Keep all existing query functions.
+- `CreateOrderModal.tsx`: After order creation, show Stripe payment step with placeholder payment form (Test Mode card input UI).
 
 ### Remove
-- Nothing from Phase 1 is removed. All Phase 1 functionality is preserved and extended.
+- Nothing removed — all Phase 1 & 2 UI/UX remains identical.
 
 ## Implementation Plan
-1. Extend `marketplace.ts` types for role, escrow, messages, files.
-2. Extend `storage.ts` with new CRUD helpers for messages, files, order acceptance, escrow.
-3. Update Motoko canister: add `acceptOrder`, `sendMessage`, `getMessages`, `uploadFile`, `getFiles`, `releaseEscrow` functions with proper anonymity enforcement.
-4. Update `App.tsx` to handle new routes: role_selection, order_detail, admin.
-5. Create `RoleSelectionPage` — two large cards (Lister / Writer) with descriptions. On select, save role to LocalStorage, route to dashboard.
-6. Update `LoginPage` to check for role after login and redirect accordingly.
-7. Update `DashboardPage` to show role-aware views. Writers get a Marketplace tab. OrderCard gets an Accept button for eligible orders.
-8. Create `OrderDetailPage` — shows order info, escrow panel, chat panel, file panel.
-9. Create `ChatPanel` component — message list, input, 5s polling, keyword filter, flagged message display.
-10. Create `FileUploadPanel` component — upload UI, file list with expiry countdown, download gating.
-11. Create `EscrowPanel` component — shows mock payment status, Release Funds button for Lister.
-12. Create `AdminPage` — hardcoded principal check, order/user mapping table, flagged messages list.
-13. Update `CreateOrderModal` — add mock escrow payment step after order form submission.
-14. Update `OrderCard` — add Accept button, click-to-detail navigation, escrow status badge.
+
+1. **Update Motoko canister** — add `acceptOrder`, `updateOrderStatus`, `openDispute`, `adminReleaseEscrow` functions; extend order storage to include writer principal, escrow status, dispute fields.
+2. **Add Stripe component** — select stripe Caffeine component, wire placeholder Stripe publishable key, build StripePaymentStep component shown after order form submission.
+3. **Add Supabase client** — install `@supabase/supabase-js`, create `lib/supabase.ts` with placeholder keys, SQL schema comments, typed query helpers for messages and files.
+4. **Upgrade lib/storage.ts** — replace message and file LocalStorage logic with Supabase async calls; replace order CRUD with canister calls; keep UserProfile/UserRole in LocalStorage.
+5. **Update OrderDetailPage** — 3s chat polling, read receipts, message delete button, "Open Dispute" button for Listers.
+6. **Update AdminPage** — add Disputes tab, release/refund action buttons.
+7. **Update CreateOrderModal** — add StripePaymentStep after form submission.
+8. **Update types/marketplace.ts** — extend interfaces with new fields.

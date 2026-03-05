@@ -138,6 +138,9 @@ export default function DashboardPage({
             <span className="font-display font-semibold text-sm tracking-wide text-foreground/80">
               BLIND MARKETPLACE
             </span>
+            <span className="hidden sm:inline text-[9px] font-mono text-muted-foreground/40 tracking-widest uppercase border border-border/30 px-1.5 py-0.5 rounded-sm">
+              Phase 3
+            </span>
           </div>
 
           {/* Right side */}

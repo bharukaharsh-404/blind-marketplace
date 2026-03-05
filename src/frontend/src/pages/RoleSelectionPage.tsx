@@ -41,7 +41,7 @@ export default function RoleSelectionPage({
           </span>
         </div>
         <span className="text-xs font-mono text-muted-foreground/60 tracking-widest uppercase">
-          Phase 2 — Full Marketplace
+          Phase 3 — Escrow & Persistence
         </span>
       </header>
 

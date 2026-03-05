@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  AlertTriangle,
   ArrowLeft,
+  CheckCheck,
   CheckCircle2,
   Clock,
   Download,
@@ -12,21 +14,27 @@ import {
   Paperclip,
   Send,
   ShieldCheck,
+  Trash2,
   Unlock,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
+  checkRateLimit,
   clearUserProfile,
-  getFiles,
-  getMessages,
+  deleteMessage,
+  getFilesAsync,
+  getMessagesAsync,
   getOrders,
   getUserProfile,
   getUserRole,
+  markMessageRead,
+  openOrderDispute,
   releaseEscrow,
+  sanitizeInput,
   saveFile,
-  saveMessage,
+  saveMessageAsync,
 } from "../lib/storage";
 import type { Message, Order, UploadedFile } from "../types/marketplace";
 
@@ -73,6 +81,10 @@ export default function OrderDetailPage({
   const [messageInput, setMessageInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isReleasingFunds, setIsReleasingFunds] = useState(false);
+  const [showDisputeForm, setShowDisputeForm] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [isSubmittingDispute, setIsSubmittingDispute] = useState(false);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,22 +94,42 @@ export default function OrderDetailPage({
   const currentPrincipalId =
     identity?.getPrincipal().toString() ?? profile?.principalId ?? "";
 
-  // Initial load
-  useEffect(() => {
+  const refreshOrder = useCallback(() => {
     const orders = getOrders();
     const found = orders.find((o) => o.orderId === orderId);
     if (found) setOrder(found);
-    setMessages(getMessages(orderId));
-    setFiles(getFiles(orderId));
   }, [orderId]);
 
-  // Poll messages every 5 seconds
+  const loadMessages = useCallback(async () => {
+    const msgs = await getMessagesAsync(orderId);
+    setMessages(msgs);
+    // Mark messages from others as read
+    for (const msg of msgs) {
+      if (msg.senderPseudonym !== pseudonym && !msg.readAt && !msg.deletedAt) {
+        markMessageRead(msg.messageId);
+      }
+    }
+  }, [orderId, pseudonym]);
+
+  const loadFiles = useCallback(async () => {
+    const loadedFiles = await getFilesAsync(orderId);
+    setFiles(loadedFiles);
+  }, [orderId]);
+
+  // Initial load
+  useEffect(() => {
+    refreshOrder();
+    void loadMessages();
+    void loadFiles();
+  }, [refreshOrder, loadMessages, loadFiles]);
+
+  // Poll messages every 3 seconds
   useEffect(() => {
     const interval = setInterval(() => {
-      setMessages(getMessages(orderId));
-    }, 5000);
+      void loadMessages();
+    }, 3000);
     return () => clearInterval(interval);
-  }, [orderId]);
+  }, [loadMessages]);
 
   // Scroll to bottom on new messages
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on message change
@@ -113,9 +145,19 @@ export default function OrderDetailPage({
   };
 
   const handleSendMessage = async () => {
-    const content = messageInput.trim();
-    if (!content) return;
+    const raw = messageInput.trim();
+    if (!raw) return;
 
+    // Rate limit check
+    if (!checkRateLimit(`msg_${pseudonym}`, 20)) {
+      toast.warning("Slow down — too many messages", {
+        description: "You are sending messages too quickly.",
+        duration: 3000,
+      });
+      return;
+    }
+
+    const content = sanitizeInput(raw);
     setIsSending(true);
 
     const lowerContent = content.toLowerCase();
@@ -130,7 +172,7 @@ export default function OrderDetailPage({
       isFlagged: isBlocked,
     };
 
-    saveMessage(msg);
+    await saveMessageAsync(msg);
     setMessages((prev) => [...prev, msg]);
     setMessageInput("");
 
@@ -156,15 +198,40 @@ export default function OrderDetailPage({
     setIsReleasingFunds(true);
     await new Promise((resolve) => setTimeout(resolve, 600));
     releaseEscrow(orderId);
-    // Refresh order state
-    const updatedOrders = getOrders();
-    const updatedOrder = updatedOrders.find((o) => o.orderId === orderId);
-    if (updatedOrder) setOrder(updatedOrder);
+    refreshOrder();
     toast.success("Funds released to writer!", {
       description: "The escrow has been released. Order marked as completed.",
       duration: 3000,
     });
     setIsReleasingFunds(false);
+  };
+
+  const handleDeleteMessage = (msg: Message) => {
+    deleteMessage(msg.messageId, pseudonym);
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.messageId === msg.messageId ? { ...m, deletedAt: Date.now() } : m,
+      ),
+    );
+  };
+
+  const handleOpenDispute = async () => {
+    const reason = sanitizeInput(disputeReason.trim());
+    if (!reason) {
+      toast.error("Please provide a reason for the dispute.");
+      return;
+    }
+    setIsSubmittingDispute(true);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    openOrderDispute(orderId, reason);
+    refreshOrder();
+    setShowDisputeForm(false);
+    setDisputeReason("");
+    setIsSubmittingDispute(false);
+    toast.success("Dispute opened", {
+      description: "An admin will review your case and release funds.",
+      duration: 3000,
+    });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,7 +261,7 @@ export default function OrderDetailPage({
         expiresAt: now + 24 * 60 * 60 * 1000,
       };
       saveFile(uploadedFile);
-      setFiles(getFiles(orderId));
+      void loadFiles();
       toast.success(`${file.name} uploaded`, {
         description: "File available for 24 hours.",
         duration: 3000,
@@ -224,7 +291,11 @@ export default function OrderDetailPage({
   const canReleaseFunds =
     isLister &&
     order?.status === "in_progress" &&
-    order?.escrowStatus === "held";
+    order?.escrowStatus === "held" &&
+    !order?.isDisputed;
+
+  const canOpenDispute =
+    isLister && order?.status === "in_progress" && !order?.isDisputed;
 
   const canUpload = role === "writer" && order?.writerPseudonym === pseudonym;
 
@@ -272,6 +343,14 @@ export default function OrderDetailPage({
                     ? "In Progress"
                     : order.status.charAt(0).toUpperCase() +
                       order.status.slice(1)}
+                </Badge>
+              )}
+              {order?.isDisputed && (
+                <Badge
+                  className="font-mono text-[10px] tracking-wider bg-orange-500/10 text-orange-500 border border-orange-500/25"
+                  variant="outline"
+                >
+                  Disputed
                 </Badge>
               )}
             </div>
@@ -355,6 +434,16 @@ export default function OrderDetailPage({
                       })}
                     </span>
                   </div>
+                  {order.stripePaymentIntentId && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground/60">
+                        Payment ID
+                      </span>
+                      <span className="text-[10px] font-mono text-muted-foreground/40 truncate max-w-[120px]">
+                        {order.stripePaymentIntentId}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -364,7 +453,27 @@ export default function OrderDetailPage({
                   Escrow
                 </h3>
 
-                {order.escrowStatus === "held" ? (
+                {order.isDisputed ? (
+                  <div className="space-y-3">
+                    {/* Dispute open state */}
+                    <div className="flex items-start gap-2 p-2.5 rounded-md border border-orange-500/25 bg-orange-500/5">
+                      <AlertTriangle className="w-4 h-4 text-orange-500/80 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-semibold text-orange-500/90">
+                          Dispute Open
+                        </p>
+                        {order.disputeReason && (
+                          <p className="text-xs text-muted-foreground/60 mt-1 leading-relaxed">
+                            {order.disputeReason}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground/50 font-mono text-center py-2 border border-border/30 rounded-md">
+                      Awaiting Admin Resolution
+                    </p>
+                  </div>
+                ) : order.escrowStatus === "held" ? (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 p-2.5 rounded-md border border-primary/20 bg-primary/5">
                       <ShieldCheck className="w-4 h-4 text-primary flex-shrink-0" />
@@ -420,6 +529,73 @@ export default function OrderDetailPage({
                         )}
                       </Button>
                     )}
+
+                    {/* Open Dispute */}
+                    {canOpenDispute && !showDisputeForm && (
+                      <Button
+                        data-ocid="order_detail.open_dispute.button"
+                        onClick={() => setShowDisputeForm(true)}
+                        size="sm"
+                        variant="ghost"
+                        className="w-full h-8 text-xs text-destructive/70 hover:text-destructive hover:bg-destructive/5 border border-destructive/20 font-mono transition-colors"
+                      >
+                        <AlertTriangle className="w-3 h-3 mr-1.5" />
+                        Open Dispute
+                      </Button>
+                    )}
+
+                    {/* Dispute inline form */}
+                    {showDisputeForm && (
+                      <div className="space-y-2 border-t border-border/30 pt-3">
+                        <p className="text-xs font-mono text-muted-foreground/60 uppercase tracking-wider">
+                          Dispute Reason
+                        </p>
+                        <Textarea
+                          data-ocid="order_detail.dispute.textarea"
+                          value={disputeReason}
+                          onChange={(e) => setDisputeReason(e.target.value)}
+                          placeholder="Describe why you're opening a dispute..."
+                          rows={3}
+                          className="bg-muted/20 border-border/40 text-foreground placeholder:text-muted-foreground/30 text-xs resize-none focus:border-destructive/40"
+                          disabled={isSubmittingDispute}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            data-ocid="order_detail.cancel_dispute.button"
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setShowDisputeForm(false);
+                              setDisputeReason("");
+                            }}
+                            disabled={isSubmittingDispute}
+                            className="flex-1 h-7 text-xs text-muted-foreground hover:text-foreground border border-border/40"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            data-ocid="order_detail.submit_dispute.button"
+                            type="button"
+                            size="sm"
+                            onClick={handleOpenDispute}
+                            disabled={
+                              isSubmittingDispute || !disputeReason.trim()
+                            }
+                            className="flex-1 h-7 text-xs bg-destructive/80 text-white hover:bg-destructive transition-colors font-mono"
+                          >
+                            {isSubmittingDispute ? (
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-3 h-3 animate-spin" />
+                                Submitting...
+                              </span>
+                            ) : (
+                              "Submit Dispute"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : order.escrowStatus === "released" ? (
                   <div className="flex items-center gap-2 p-2.5 rounded-md border border-chart-2/20 bg-chart-2/5">
@@ -430,6 +606,18 @@ export default function OrderDetailPage({
                       </p>
                       <p className="text-xs text-muted-foreground/60">
                         Order completed
+                      </p>
+                    </div>
+                  </div>
+                ) : order.escrowStatus === "refunded" ? (
+                  <div className="flex items-center gap-2 p-2.5 rounded-md border border-orange-500/20 bg-orange-500/5">
+                    <Unlock className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold text-orange-500">
+                        Refunded
+                      </p>
+                      <p className="text-xs text-muted-foreground/60">
+                        Funds returned to lister
                       </p>
                     </div>
                   </div>
@@ -532,7 +720,7 @@ export default function OrderDetailPage({
                   Order #{orderId}
                 </span>
                 <span className="text-xs text-muted-foreground/40 ml-auto font-mono">
-                  Anonymous Chat
+                  Anonymous Chat · 3s refresh
                 </span>
               </div>
 
@@ -570,6 +758,8 @@ export default function OrderDetailPage({
                   <div className="space-y-3">
                     {messages.map((msg, i) => {
                       const isOwn = msg.senderPseudonym === pseudonym;
+                      const isDeleted = !!msg.deletedAt;
+                      const isRead = !!msg.readAt;
 
                       if (msg.isFlagged) {
                         return (
@@ -586,11 +776,34 @@ export default function OrderDetailPage({
                         );
                       }
 
+                      if (isDeleted) {
+                        return (
+                          <div
+                            key={msg.messageId}
+                            data-ocid={`chat.message.${i + 1}`}
+                            className={`flex gap-2 ${isOwn ? "flex-row-reverse" : "flex-row"}`}
+                          >
+                            <div className="flex-shrink-0 w-6 h-6 rounded-full border border-border/30 bg-muted/20 flex items-center justify-center text-[9px] font-mono text-muted-foreground/30">
+                              {isOwn ? "Y" : "T"}
+                            </div>
+                            <div className="max-w-[75%]">
+                              <div className="px-3 py-2 rounded-lg text-xs italic text-muted-foreground/40 border border-border/20 bg-muted/10">
+                                This message was deleted
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div
                           key={msg.messageId}
                           data-ocid={`chat.message.${i + 1}`}
                           className={`flex gap-2 ${isOwn ? "flex-row-reverse" : "flex-row"}`}
+                          onMouseEnter={() =>
+                            setHoveredMessageId(msg.messageId)
+                          }
+                          onMouseLeave={() => setHoveredMessageId(null)}
                         >
                           <div
                             className={`flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center text-[9px] font-mono font-bold ${
@@ -604,14 +817,28 @@ export default function OrderDetailPage({
                           <div
                             className={`max-w-[75%] ${isOwn ? "items-end" : "items-start"} flex flex-col gap-1`}
                           >
-                            <div
-                              className={`px-3 py-2 rounded-lg text-sm leading-relaxed ${
-                                isOwn
-                                  ? "bg-primary/15 text-foreground border border-primary/20"
-                                  : "bg-muted/30 text-foreground border border-border/30"
-                              }`}
-                            >
-                              {msg.content}
+                            <div className="relative group/msg">
+                              <div
+                                className={`px-3 py-2 rounded-lg text-sm leading-relaxed ${
+                                  isOwn
+                                    ? "bg-primary/15 text-foreground border border-primary/20"
+                                    : "bg-muted/30 text-foreground border border-border/30"
+                                }`}
+                              >
+                                {msg.content}
+                              </div>
+                              {/* Delete button for own messages */}
+                              {isOwn && hoveredMessageId === msg.messageId && (
+                                <button
+                                  type="button"
+                                  data-ocid={`chat.message_delete.button.${i + 1}`}
+                                  onClick={() => handleDeleteMessage(msg)}
+                                  className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-destructive/80 border border-destructive/40 flex items-center justify-center text-white hover:bg-destructive transition-colors"
+                                  title="Delete message"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                </button>
+                              )}
                             </div>
                             <div
                               className={`flex items-center gap-1 ${isOwn ? "flex-row-reverse" : ""}`}
@@ -622,6 +849,13 @@ export default function OrderDetailPage({
                               <span className="text-[10px] font-mono text-muted-foreground/30">
                                 · {formatTime(msg.timestamp)}
                               </span>
+                              {/* Read receipt for own messages */}
+                              {isOwn && isRead && (
+                                <span className="text-[10px] font-mono text-primary/50 flex items-center gap-0.5">
+                                  <CheckCheck className="w-3 h-3" />
+                                  Read
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>

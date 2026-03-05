@@ -4,6 +4,7 @@ import type {
   UploadedFile,
   UserProfile,
 } from "../types/marketplace";
+import { isSupabaseConfigured, supabase } from "./supabase";
 
 const ORDERS_KEY = "blind_marketplace_orders";
 const USER_KEY = "blind_marketplace_user";
@@ -13,6 +14,30 @@ const FILES_KEY = "blind_marketplace_files";
 
 const PSEUDONYM_PREFIXES = ["Writer", "Lister", "Scholar", "Agent", "Broker"];
 
+// ─── Rate Limiter ───────────────────────────────────────────────
+const rateLimitCounters = new Map<string, { count: number; resetAt: number }>();
+
+export function checkRateLimit(key: string, maxPerMinute = 10): boolean {
+  const now = Date.now();
+  const entry = rateLimitCounters.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitCounters.set(key, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  if (entry.count >= maxPerMinute) return false;
+  entry.count++;
+  return true;
+}
+
+// ─── Input Sanitizer ────────────────────────────────────────────
+export function sanitizeInput(input: string, maxLength = 2000): string {
+  return input
+    .replace(/<[^>]*>/g, "") // strip HTML
+    .slice(0, maxLength)
+    .trim();
+}
+
+// ─── User Profile ────────────────────────────────────────────────
 export function generatePseudonym(): string {
   const prefix =
     PSEUDONYM_PREFIXES[Math.floor(Math.random() * PSEUDONYM_PREFIXES.length)];
@@ -88,8 +113,8 @@ export function createOrder(
 
   const newOrder: Order = {
     orderId,
-    title: data.title,
-    description: data.description,
+    title: sanitizeInput(data.title, 200),
+    description: sanitizeInput(data.description, 2000),
     budget: data.budget,
     status: "open",
     createdAt: Date.now(),
@@ -132,7 +157,81 @@ export function releaseEscrow(orderId: string): void {
   saveOrders(updated);
 }
 
+// ─── Phase 3: Order dispute & admin actions ────────────────────
+export function openOrderDispute(orderId: string, reason: string): void {
+  const orders = getOrders();
+  const updated = orders.map((o) => {
+    if (o.orderId === orderId) {
+      return {
+        ...o,
+        isDisputed: true,
+        disputeReason: sanitizeInput(reason, 1000),
+      };
+    }
+    return o;
+  });
+  saveOrders(updated);
+}
+
+export function adminReleaseToWriter(orderId: string): void {
+  const orders = getOrders();
+  const updated = orders.map((o) => {
+    if (o.orderId === orderId) {
+      return {
+        ...o,
+        status: "completed" as const,
+        escrowStatus: "released" as const,
+        isDisputed: false,
+        disputeReason: undefined,
+      };
+    }
+    return o;
+  });
+  saveOrders(updated);
+}
+
+export function adminRefundToLister(orderId: string): void {
+  const orders = getOrders();
+  const updated = orders.map((o) => {
+    if (o.orderId === orderId) {
+      return {
+        ...o,
+        status: "open" as const,
+        escrowStatus: "refunded" as const,
+        isDisputed: false,
+        disputeReason: undefined,
+        writerPseudonym: undefined,
+      };
+    }
+    return o;
+  });
+  saveOrders(updated);
+}
+
+export function getAllOrders(): Order[] {
+  return getOrders();
+}
+
+export function getDisputedOrders(): Order[] {
+  return getOrders().filter((o) => o.isDisputed === true);
+}
+
+export function setStripePaymentIntent(
+  orderId: string,
+  paymentIntentId: string,
+): void {
+  const orders = getOrders();
+  const updated = orders.map((o) => {
+    if (o.orderId === orderId) {
+      return { ...o, stripePaymentIntentId: paymentIntentId };
+    }
+    return o;
+  });
+  saveOrders(updated);
+}
+
 // ─── Messages ──────────────────────────────────────────────────
+// Sync fallback (localStorage)
 export function getMessages(orderId: string): Message[] {
   try {
     const raw = localStorage.getItem(MESSAGES_KEY);
@@ -165,7 +264,139 @@ export function getAllMessages(): Message[] {
   }
 }
 
+// Async variants (try Supabase, fall back to localStorage)
+export async function getMessagesAsync(orderId: string): Promise<Message[]> {
+  if (!isSupabaseConfigured) {
+    return getMessages(orderId);
+  }
+  try {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("order_id", orderId)
+      .order("timestamp", { ascending: true });
+
+    if (error) throw error;
+    if (!data) return getMessages(orderId);
+
+    const msgs: Message[] = data.map(
+      (row: {
+        message_id: string;
+        order_id: string;
+        sender_pseudonym: string;
+        content: string;
+        timestamp: number;
+        is_flagged: boolean;
+        read_at?: number;
+        deleted_at?: number;
+      }) => ({
+        messageId: row.message_id,
+        orderId: row.order_id,
+        senderPseudonym: row.sender_pseudonym,
+        content: row.content,
+        timestamp: row.timestamp,
+        isFlagged: row.is_flagged,
+        readAt: row.read_at ?? undefined,
+        deletedAt: row.deleted_at ?? undefined,
+      }),
+    );
+    return msgs;
+  } catch {
+    return getMessages(orderId);
+  }
+}
+
+export async function saveMessageAsync(msg: Message): Promise<void> {
+  // Always save to localStorage as backup
+  saveMessage(msg);
+
+  if (!isSupabaseConfigured) return;
+
+  try {
+    await supabase.from("messages").upsert({
+      message_id: msg.messageId,
+      order_id: msg.orderId,
+      sender_pseudonym: msg.senderPseudonym,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      is_flagged: msg.isFlagged,
+      read_at: msg.readAt ?? null,
+      deleted_at: msg.deletedAt ?? null,
+    });
+  } catch {
+    // fall back to localStorage which already has the message
+  }
+}
+
+// ─── Phase 3: Message actions ──────────────────────────────────
+export function markMessageRead(messageId: string): void {
+  try {
+    const raw = localStorage.getItem(MESSAGES_KEY);
+    if (!raw) return;
+    const all = JSON.parse(raw) as Message[];
+    const updated = all.map((m) => {
+      if (m.messageId === messageId && !m.readAt) {
+        return { ...m, readAt: Date.now() };
+      }
+      return m;
+    });
+    localStorage.setItem(MESSAGES_KEY, JSON.stringify(updated));
+  } catch {
+    // fail silently
+  }
+
+  // Async Supabase update (fire and forget)
+  if (isSupabaseConfigured) {
+    void (async () => {
+      try {
+        await supabase
+          .from("messages")
+          .update({ read_at: Date.now() })
+          .eq("message_id", messageId);
+      } catch {
+        // ignore
+      }
+    })();
+  }
+}
+
+export function deleteMessage(
+  messageId: string,
+  senderPseudonym: string,
+): void {
+  try {
+    const raw = localStorage.getItem(MESSAGES_KEY);
+    if (!raw) return;
+    const all = JSON.parse(raw) as Message[];
+    const updated = all.map((m) => {
+      if (m.messageId === messageId && m.senderPseudonym === senderPseudonym) {
+        return { ...m, deletedAt: Date.now() };
+      }
+      return m;
+    });
+    localStorage.setItem(MESSAGES_KEY, JSON.stringify(updated));
+  } catch {
+    // fail silently
+  }
+
+  // Async Supabase update (fire and forget)
+  if (isSupabaseConfigured) {
+    void (async () => {
+      try {
+        await supabase
+          .from("messages")
+          .update({ deleted_at: Date.now() })
+          .eq("message_id", messageId)
+          .eq("sender_pseudonym", senderPseudonym);
+      } catch {
+        // ignore
+      }
+    })();
+  }
+}
+
 // ─── Files ─────────────────────────────────────────────────────
+// Sync fallback (localStorage)
 export function getFiles(orderId: string): UploadedFile[] {
   try {
     const raw = localStorage.getItem(FILES_KEY);
@@ -185,6 +416,71 @@ export function saveFile(file: UploadedFile): void {
     localStorage.setItem(FILES_KEY, JSON.stringify(all));
   } catch {
     // fail silently
+  }
+}
+
+// Async variants (try Supabase, fall back to localStorage)
+export async function getFilesAsync(orderId: string): Promise<UploadedFile[]> {
+  if (!isSupabaseConfigured) {
+    return getFiles(orderId);
+  }
+  try {
+    const { data, error } = await supabase
+      .from("files")
+      .select("*")
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+    if (!data) return getFiles(orderId);
+
+    const files: UploadedFile[] = data.map(
+      (row: {
+        file_id: string;
+        order_id: string;
+        uploader_pseudonym: string;
+        file_name: string;
+        file_size: number;
+        storage_url?: string;
+        created_at: number;
+        expires_at: number;
+      }) => ({
+        fileId: row.file_id,
+        orderId: row.order_id,
+        uploaderPseudonym: row.uploader_pseudonym,
+        fileName: row.file_name,
+        fileSize: row.file_size,
+        fileData: row.storage_url ?? "",
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        supabaseStorageUrl: row.storage_url ?? undefined,
+      }),
+    );
+    return files;
+  } catch {
+    return getFiles(orderId);
+  }
+}
+
+export async function saveFileAsync(file: UploadedFile): Promise<void> {
+  // Always save to localStorage as backup
+  saveFile(file);
+
+  if (!isSupabaseConfigured) return;
+
+  try {
+    await supabase.from("files").upsert({
+      file_id: file.fileId,
+      order_id: file.orderId,
+      uploader_pseudonym: file.uploaderPseudonym,
+      file_name: file.fileName,
+      file_size: file.fileSize,
+      storage_url: file.supabaseStorageUrl ?? null,
+      created_at: file.createdAt,
+      expires_at: file.expiresAt,
+    });
+  } catch {
+    // fall back to localStorage which already has the file
   }
 }
 

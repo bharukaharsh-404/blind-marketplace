@@ -13,12 +13,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   Fingerprint,
   Lock,
+  RefreshCw,
   ShieldAlert,
 } from "lucide-react";
 import { useState } from "react";
-import { getAllMessages, getOrders } from "../lib/storage";
+import { toast } from "sonner";
+import {
+  adminRefundToLister,
+  adminReleaseToWriter,
+  getAllMessages,
+  getDisputedOrders,
+  getOrders,
+} from "../lib/storage";
 import type { Message, Order } from "../types/marketplace";
 
 interface AdminPageProps {
@@ -36,9 +45,12 @@ function formatDate(timestamp: number): string {
 
 export default function AdminPage({ onBack }: AdminPageProps) {
   const [activeTab, setActiveTab] = useState("order_mapping");
+  const [orders, setOrders] = useState<Order[]>(() => getOrders());
+  const [allMessages] = useState<Message[]>(() => getAllMessages());
+  const [disputedOrders, setDisputedOrders] = useState<Order[]>(() =>
+    getDisputedOrders(),
+  );
 
-  const orders: Order[] = getOrders();
-  const allMessages: Message[] = getAllMessages();
   const flaggedMessages = allMessages.filter((m) => m.isFlagged);
 
   // Compute flagged message count per order
@@ -52,16 +64,40 @@ export default function AdminPage({ onBack }: AdminPageProps) {
     {},
   );
 
+  const refreshData = () => {
+    setOrders(getOrders());
+    setDisputedOrders(getDisputedOrders());
+  };
+
+  const handleReleaseToWriter = (orderId: string) => {
+    adminReleaseToWriter(orderId);
+    refreshData();
+    toast.success("Funds released to writer", {
+      description: `Order ${orderId} has been marked as completed.`,
+      duration: 3000,
+    });
+  };
+
+  const handleRefundToLister = (orderId: string) => {
+    adminRefundToLister(orderId);
+    refreshData();
+    toast.success("Refund issued to lister", {
+      description: `Order ${orderId} has been reset and funds returned.`,
+      duration: 3000,
+    });
+  };
+
   const STATUS_COLORS = {
     open: "bg-primary/10 text-primary border-primary/20",
     in_progress: "bg-chart-4/10 text-chart-4 border-chart-4/20",
     completed: "bg-chart-2/10 text-chart-2 border-chart-2/20",
   };
 
-  const ESCROW_COLORS = {
+  const ESCROW_COLORS: Record<string, string> = {
     none: "bg-muted/30 text-muted-foreground border-border/40",
     held: "bg-chart-4/10 text-chart-4 border-chart-4/20",
     released: "bg-chart-2/10 text-chart-2 border-chart-2/20",
+    refunded: "bg-orange-500/10 text-orange-500 border-orange-500/20",
   };
 
   return (
@@ -119,7 +155,7 @@ export default function AdminPage({ onBack }: AdminPageProps) {
         </div>
 
         {/* Stats bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
           {[
             {
               label: "Total Orders",
@@ -137,11 +173,19 @@ export default function AdminPage({ onBack }: AdminPageProps) {
               color: "text-chart-4",
             },
             {
-              label: "Flagged Messages",
+              label: "Flagged Msgs",
               value: flaggedMessages.length,
               color:
                 flaggedMessages.length > 0
                   ? "text-destructive"
+                  : "text-muted-foreground/50",
+            },
+            {
+              label: "Disputes",
+              value: disputedOrders.length,
+              color:
+                disputedOrders.length > 0
+                  ? "text-orange-500"
                   : "text-muted-foreground/50",
             },
           ].map((stat) => (
@@ -178,6 +222,18 @@ export default function AdminPage({ onBack }: AdminPageProps) {
               {flaggedMessages.length > 0 && (
                 <span className="w-4 h-4 rounded-full bg-destructive/20 border border-destructive/30 text-destructive text-[9px] font-bold flex items-center justify-center">
                   {flaggedMessages.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger
+              data-ocid="admin.disputes.tab"
+              value="disputes"
+              className="text-xs font-mono data-[state=active]:bg-background/80 data-[state=active]:text-foreground flex items-center gap-1.5"
+            >
+              Disputes
+              {disputedOrders.length > 0 && (
+                <span className="w-4 h-4 rounded-full bg-orange-500/20 border border-orange-500/30 text-orange-500 text-[9px] font-bold flex items-center justify-center">
+                  {disputedOrders.length}
                 </span>
               )}
             </TabsTrigger>
@@ -232,9 +288,14 @@ export default function AdminPage({ onBack }: AdminPageProps) {
                             className="border-border/20 hover:bg-muted/10 transition-colors"
                           >
                             <TableCell>
-                              <span className="order-id-badge text-xs font-bold text-primary/80 bg-primary/8 border border-primary/15 px-2 py-0.5 rounded-sm">
-                                {order.orderId}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="order-id-badge text-xs font-bold text-primary/80 bg-primary/8 border border-primary/15 px-2 py-0.5 rounded-sm">
+                                  {order.orderId}
+                                </span>
+                                {order.isDisputed && (
+                                  <AlertTriangle className="w-3 h-3 text-orange-500/70" />
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>
                               <span className="text-xs font-mono text-foreground/70">
@@ -263,7 +324,7 @@ export default function AdminPage({ onBack }: AdminPageProps) {
                             </TableCell>
                             <TableCell>
                               <Badge
-                                className={`font-mono text-[10px] tracking-wider ${ESCROW_COLORS[order.escrowStatus]}`}
+                                className={`font-mono text-[10px] tracking-wider ${ESCROW_COLORS[order.escrowStatus] ?? ESCROW_COLORS.none}`}
                                 variant="outline"
                               >
                                 {order.escrowStatus.charAt(0).toUpperCase() +
@@ -341,6 +402,114 @@ export default function AdminPage({ onBack }: AdminPageProps) {
                     <p className="text-[10px] font-mono text-muted-foreground/40">
                       {formatDate(msg.timestamp)}
                     </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Disputes tab */}
+          <TabsContent value="disputes">
+            {disputedOrders.length === 0 ? (
+              <div
+                data-ocid="admin.disputes.empty_state"
+                className="flex flex-col items-center justify-center py-16 text-center"
+              >
+                <div className="w-10 h-10 rounded-full border border-border/40 bg-muted/20 flex items-center justify-center mb-3">
+                  <CheckCircle2 className="w-5 h-5 text-muted-foreground/30" />
+                </div>
+                <p className="text-xs font-mono text-muted-foreground/40">
+                  No active disputes
+                </p>
+                <p className="text-[10px] font-mono text-muted-foreground/30 mt-1">
+                  All orders are running smoothly
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {disputedOrders.map((order, i) => (
+                  <div
+                    key={order.orderId}
+                    className="bg-card border border-orange-500/20 rounded-lg p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="order-id-badge text-xs font-bold text-primary/80 bg-primary/8 border border-primary/15 px-2 py-0.5 rounded-sm">
+                          {order.orderId}
+                        </span>
+                        <Badge
+                          className="font-mono text-[10px] bg-orange-500/10 text-orange-500 border-orange-500/25"
+                          variant="outline"
+                        >
+                          Disputed
+                        </Badge>
+                        <span className="text-xs font-mono text-muted-foreground/50">
+                          ${order.budget.toFixed(2)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={refreshData}
+                        className="text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
+                        title="Refresh"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-wider">
+                          Lister
+                        </p>
+                        <p className="font-mono text-foreground/70">
+                          {order.listerPseudonym}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-wider">
+                          Writer
+                        </p>
+                        <p className="font-mono text-foreground/70">
+                          {order.writerPseudonym ?? (
+                            <span className="text-muted-foreground/30">—</span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {order.disputeReason && (
+                      <div className="p-2.5 rounded-md bg-orange-500/5 border border-orange-500/15 mb-3">
+                        <p className="text-[10px] font-mono text-orange-500/70 uppercase tracking-wider mb-1">
+                          Dispute Reason
+                        </p>
+                        <p className="text-xs text-foreground/70 leading-relaxed">
+                          {order.disputeReason}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Button
+                        data-ocid={`admin.dispute.release_button.${i + 1}`}
+                        size="sm"
+                        onClick={() => handleReleaseToWriter(order.orderId)}
+                        className="flex-1 h-8 text-xs bg-chart-2/90 text-background hover:bg-chart-2 transition-colors font-mono"
+                      >
+                        <CheckCircle2 className="w-3 h-3 mr-1.5" />
+                        Release to Writer
+                      </Button>
+                      <Button
+                        data-ocid={`admin.dispute.refund_button.${i + 1}`}
+                        size="sm"
+                        onClick={() => handleRefundToLister(order.orderId)}
+                        variant="ghost"
+                        className="flex-1 h-8 text-xs text-orange-500/80 hover:text-orange-500 hover:bg-orange-500/8 border border-orange-500/25 font-mono transition-colors"
+                      >
+                        <RefreshCw className="w-3 h-3 mr-1.5" />
+                        Refund to Lister
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

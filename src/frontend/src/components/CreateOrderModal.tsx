@@ -10,11 +10,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle2, Loader2, Lock, PlusCircle } from "lucide-react";
+import { CheckCircle2, Loader2, PlusCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { createOrder } from "../lib/storage";
+import { createOrder, setStripePaymentIntent } from "../lib/storage";
 import type { Order } from "../types/marketplace";
+import StripePaymentStep from "./StripePaymentStep";
 
 interface CreateOrderModalProps {
   open: boolean;
@@ -100,8 +101,9 @@ export default function CreateOrderModal({
     }
   };
 
-  const handleEscrowConfirm = () => {
+  const handleStripeConfirm = (paymentIntentId: string) => {
     if (createdOrder) {
+      setStripePaymentIntent(createdOrder.orderId, paymentIntentId);
       onOrderCreated(createdOrder);
       toast.success(
         `Order ${createdOrder.orderId} created — funds locked in escrow`,
@@ -125,8 +127,6 @@ export default function CreateOrderModal({
   };
 
   const budgetNum = Number.parseFloat(budget) || 0;
-  const commission = budgetNum * 0.15;
-  const writerReceives = budgetNum - commission;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -311,84 +311,22 @@ export default function CreateOrderModal({
             </>
           ) : (
             <>
-              <DialogHeader className="mb-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded border border-primary/30 bg-primary/10 flex items-center justify-center">
-                    <Lock className="w-3.5 h-3.5 text-primary" />
-                  </div>
-                  <DialogTitle className="font-display font-semibold text-base text-foreground">
-                    Mock Escrow Payment
-                  </DialogTitle>
-                </div>
+              <DialogHeader className="mb-4">
+                <DialogTitle className="font-display font-semibold text-base text-foreground">
+                  Stripe Escrow Payment
+                </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
                   Funds are held securely until you approve the delivered work.
                 </DialogDescription>
               </DialogHeader>
 
-              {/* Order summary */}
-              <div className="p-3 rounded-md bg-muted/20 border border-border/40 mb-4">
-                <p className="text-xs font-mono text-muted-foreground/60 mb-1">
-                  ORDER
-                </p>
-                <p className="font-display font-semibold text-sm text-foreground truncate">
-                  {createdOrder?.title}
-                </p>
-                <p className="text-xs font-mono text-primary mt-1">
-                  {createdOrder?.orderId}
-                </p>
-              </div>
-
-              {/* Breakdown */}
-              <div className="space-y-2 mb-5">
-                <div className="flex items-center justify-between py-2 border-b border-border/30">
-                  <span className="text-xs text-muted-foreground/70">
-                    Total budget
-                  </span>
-                  <span className="text-sm font-mono font-semibold text-foreground">
-                    ${budgetNum.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-border/30">
-                  <span className="text-xs text-muted-foreground/70">
-                    Platform fee (15%)
-                  </span>
-                  <span className="text-sm font-mono text-chart-4">
-                    −${commission.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2">
-                  <span className="text-xs text-muted-foreground/70">
-                    Writer receives
-                  </span>
-                  <span className="text-sm font-mono font-bold text-chart-2">
-                    ${writerReceives.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Escrow badge */}
-              <div className="flex items-center gap-2.5 p-3 rounded-md border border-primary/20 bg-primary/5 mb-5">
-                <div className="w-6 h-6 rounded border border-primary/30 bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <Lock className="w-3 h-3 text-primary" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-primary">
-                    Payment Held in Escrow
-                  </p>
-                  <p className="text-xs text-muted-foreground/60">
-                    Funds are locked until you approve the work
-                  </p>
-                </div>
-              </div>
-
-              <Button
-                data-ocid="create_order.escrow_confirm_button"
-                onClick={handleEscrowConfirm}
-                className="w-full h-9 text-sm bg-primary text-primary-foreground hover:opacity-90 transition-opacity font-medium"
-              >
-                <Lock className="w-3.5 h-3.5 mr-1.5" />
-                Confirm & Lock in Escrow
-              </Button>
+              <StripePaymentStep
+                orderId={createdOrder?.orderId ?? ""}
+                budget={budgetNum}
+                pseudonym={pseudonym}
+                onConfirm={handleStripeConfirm}
+                onCancel={handleClose}
+              />
             </>
           )}
         </div>
